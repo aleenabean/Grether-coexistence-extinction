@@ -1,1 +1,1 @@
-App is live on shinyapp.io @ https://aleenamunshi.shinyapps.io/coexistence_app/
+App is live on shinyapps.io @ https://aleenamunshi.shinyapps.io/coexistence_app/
