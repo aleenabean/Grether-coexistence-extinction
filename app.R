@@ -4,30 +4,17 @@
 # 2. Extinction probability heatmaps (Pr_Sp1_Extinct, Pr_Sp2_Extinct)
 # 3. Outcome category probability heatmap (P(Outcome_ft == selected))
 
-#mean trait values change over time (which parameters? = fighting diff, frac refuge, resource overlap)
-#average z (mu and sigma) value at each time point
-#hope: diff simulations for each set of parameters follow a direction (if not pick specific examples)
-
-#make comparison between original model, neural network model, same parameter values, how likely is it that species would D/C
-#keep it to trait diff 1 or 2 to match og model simulations ; compare with eugene's
-
-#width of 1 for gaussian function works for now in new model works well
-
-# Data files needed:
-# - Simulations_summary10.csv
-# - Simulation_results_24.csv
-
-
 library(shiny)
 library(dplyr)
 library(ggplot2)
 library(readr)
 library(bslib)
+library(tidyr)
 
 summary_path <- "Simulations_summary10.csv"
 runs_path    <- "Simulation_results_24.csv"
 
-#helper functions
+# helper functions
 stop_if_missing <- function(path) {
   if (!file.exists(path)) stop("Missing required file: ", path, call. = FALSE)
 }
@@ -45,14 +32,14 @@ theme_midnight_plot <- function() {
     )
 }
 
-#loading data
+# loading data
 stop_if_missing(summary_path)
 stop_if_missing(runs_path)
 
 summary_df <- read_csv(summary_path, show_col_types = FALSE)
 runs_df    <- read_csv(runs_path,    show_col_types = FALSE)
 
-#ensuring correct columns (from summary file)
+# ensuring correct columns (from summary file)
 req_summary <- c("InitialDiff", "FracRefuge", "ResourceOverlap", "FightingDiff",
                  "Pr_Coexist", "Pr_Sp1_Extinct", "Pr_Sp2_Extinct")
 miss_summary <- setdiff(req_summary, names(summary_df))
@@ -61,6 +48,7 @@ if (length(miss_summary) > 0) {
        paste(miss_summary, collapse = ", "),
        call. = FALSE)
 }
+
 # same but for outcome heatmap
 req_runs <- c("InitialDiff", "FracRefuge", "ResourceOverlap", "FightingDiff", "Outcome_ft")
 miss_runs <- setdiff(req_runs, names(runs_df))
@@ -70,29 +58,110 @@ if (length(miss_runs) > 0) {
        call. = FALSE)
 }
 
-#shared control values (refuge and InitialDiff)
+# -------------------------------------------------------------------
+# Outcome category mapping + display names + descriptions
+# -------------------------------------------------------------------
+
+# Internal category keys (used in data)
+outcome_choices_internal <- c("stasis", "2diverging", "divergence", "1chasing2",
+                              "forked", "1diverging", "1converging")
+
+# Display labels shown in the dropdown (maps internal -> nice label)
+outcome_display_labels <- c(
+  "stasis"      = "Stasis",
+  "2diverging"  = "Species 2 Diverges",
+  "divergence"  = "Both Species Diverge",
+  "1chasing2"   = "Species 1 Chases Species 2",
+  "forked"      = "Forked",
+  "1diverging"  = "Species 1 Diverges",
+  "1converging" = "Species 1 Converges"
+)
+
+# Descriptions shown below the dropdown when each category is selected
+outcome_descriptions <- c(
+  "stasis" = paste0(
+    strong("Stasis:"), " Both Z and Mu of both species remained more or less the same ",
+    "from beginning to end."
+  ),
+  "2diverging" = paste0(
+    strong("Species 2 Diverges:"), " Species 2 diverged in Z, Mu, or both, becoming more ",
+    "phenotypically distinct from Species 1. Species 1 remained relatively stable in its ",
+    "values of Z and Mu from beginning to end."
+  ),
+  "divergence" = paste0(
+    strong("Both Species Diverge:"), " Both Species 1 and Species 2 diverged in Z, Mu, or ",
+    "both, becoming more phenotypically distinct from one another."
+  ),
+  "1chasing2" = paste0(
+    strong("Species 1 Chases Species 2:"), " Species 2 diverged in Z, Mu, or both, while ",
+    "Species 1 converged (became more phenotypically similar to) Species 2. This resulted in ",
+    "Species 2 continuously evolving away from the Z and Mu of Species 1, while Species 1 evolved ",
+    "in the same direction and remained phenotypically similar to Species 2. ",
+    "Compare to predictions of the Red Queen hypothesis."
+  ),
+  "forked" = paste0(
+    strong("Forked:"), " Either Species 1 or Species 2 (or both) diverged from itself, meaning its ",
+    "Z-value and recognition function separated and it could no longer recognize conspecifics. ",
+    "More likely to occur in Species 2 due to high costs of fights with Species 1. ",
+    em("Not considered biologically plausible.")
+  ),
+  "1diverging" = paste0(
+    strong("Species 1 Diverges:"), " Species 1 diverged in Z, Mu, or both, becoming more ",
+    "phenotypically distinct from Species 2. Species 2 remained relatively stable in its ",
+    "values of Z and Mu from beginning to end."
+  ),
+  "1converging" = paste0(
+    strong("Species 1 Converges:"), " Species 1 converged in Z, Mu, or both, becoming more ",
+    "phenotypically similar to Species 2. Species 2 remained relatively stable in its ",
+    "values of Z and Mu from beginning to end."
+  )
+)
+
+# Named vector for selectizeInput: names = display labels, values = internal keys
+outcome_select_choices <- setNames(
+  outcome_choices_internal,
+  outcome_display_labels[outcome_choices_internal]
+)
+
+runs_df <- runs_df %>%
+  mutate(
+    Outcome_cat = case_when(
+      Outcome_ft == "stasis" ~ "stasis",
+      
+      Outcome_ft %in% c("2diverging", "Z2diverging", "Mu2diverging") ~ "2diverging",
+      
+      Outcome_ft %in% c("divergence", "Z2Mu1diverging", "Z1Z2diverging",
+                        "Z1Mu2diverging", "Mu1Mu2diverging") ~ "divergence",
+      
+      Outcome_ft %in% c("1chasing2", "Mu1chasingZ2", "Z1chasingMu2") ~ "1chasing2",
+      
+      Outcome_ft == "forked" ~ "forked",
+      
+      Outcome_ft %in% c("1diverging", "Z1diverging", "Mu1diverging") ~ "1diverging",
+      
+      Outcome_ft %in% c("1converging", "Mu1converging", "Z1converging") ~ "1converging",
+      
+      TRUE ~ NA_character_   # removes Z2converging and anything else not listed
+    )
+  ) %>%
+  filter(!is.na(Outcome_cat))
+
+# shared control values (refuge and InitialDiff)
 fracs <- sort(unique(summary_df$FracRefuge))
 initialdiff_choices <- sort(unique(summary_df$InitialDiff))
 
-#fixed axis ordering for heatmap tiles
-x_levels <- sort(unique(summary_df$FightingDiff))
+# fixed axis ordering for heatmap tiles
+x_levels <- sort(unique(summary_df$FightingDiff), decreasing = TRUE)
 y_levels <- sort(unique(summary_df$ResourceOverlap))
 
-#precompute probabilities for Outcome_ft
-#1.for each parameter combination (InitialDiff, ResourceOverlap, FracRefuge,
-#FightingDiff) and each outcome categorycount how many simulation runs
-# produced that outcome (n)
-#2. within each parameter combination,  divide by the total number of runs
-#for that combination (sum(n)) to get a probability
+# precompute probabilities for PI categories
 outcome_probs <- runs_df %>%
-  count(InitialDiff, ResourceOverlap, FracRefuge, FightingDiff, Outcome_ft, name = "n") %>%
+  count(InitialDiff, ResourceOverlap, FracRefuge, FightingDiff, Outcome_cat, name = "n") %>%
   group_by(InitialDiff, ResourceOverlap, FracRefuge, FightingDiff) %>%
   mutate(prob = n / sum(n)) %>%
   ungroup()
 
-outcome_choices <- sort(unique(outcome_probs$Outcome_ft))
-
-#UI//clear defintions for ecology terms
+# UI text
 definition_text <- list(
   FracRefuge = paste(
     "Refuge habitat proportion (FracRefuge): the fraction of habitat that serves as a refuge for Species 2.",
@@ -114,12 +183,12 @@ definition_text <- list(
   Pr_Sp1_Extinct = "Probability Species 1 goes extinct (Pr_Sp1_Extinct): estimated probability (0 to 1) that Species 1 is lost.",
   Pr_Sp2_Extinct = "Probability Species 2 goes extinct (Pr_Sp2_Extinct): estimated probability (0 to 1) that Species 2 is lost.",
   Outcome_ft = paste(
-    "Outcome category (Outcome_ft): a categorical label summarizing the evolutionary/end-state outcome of a simulation run.",
-    "In the heatmap, we show the probability (0 to 1) that Outcome_ft equals the selected category for each parameter combination."
+    "Outcome category: grouped categories (PI-defined) summarizing the evolutionary/end-state outcome of a simulation run.",
+    "In the heatmap, we show the probability (0 to 1) that the grouped category occurs for each parameter combination."
   )
 )
 
-#UI
+# UI
 ui <- page_sidebar(
   title = "Coexistence and extinction heatmaps (Grether model results)",
   theme = bs_theme(
@@ -136,7 +205,6 @@ ui <- page_sidebar(
     h4("What you are controlling"),
     p("These settings apply to all three graph tabs."),
     
-    #scenario
     tooltip(
       selectInput(
         "initialdiff",
@@ -148,7 +216,6 @@ ui <- page_sidebar(
       placement = "right"
     ),
     
-    #refuge slider (discrete)
     tooltip(
       sliderInput(
         "fr_idx",
@@ -188,9 +255,10 @@ ui <- page_sidebar(
   navset_card_tab(
     nav_panel(
       "Coexistence probability heatmap",
-      div(style = "padding: 10px;",
-          p(strong("Color meaning: "), definition_text$Pr_Coexist),
-          p("Axes are fixed: x = FightingDiff, y = ResourceOverlap. Use FracRefuge to change the slice.")
+      div(
+        style = "padding: 10px;",
+        p(strong("Color meaning: "), definition_text$Pr_Coexist),
+        p("Axes are fixed: x = FightingDiff, y = ResourceOverlap. Use FracRefuge to change the slice.")
       ),
       card(
         full_screen = TRUE,
@@ -201,15 +269,17 @@ ui <- page_sidebar(
     
     nav_panel(
       "Extinction probability heatmaps",
-      div(style = "padding: 10px;",
-          p("These two heatmaps use the same axes and FracRefuge slider."),
-          tags$ul(
-            tags$li(definition_text$Pr_Sp1_Extinct),
-            tags$li(definition_text$Pr_Sp2_Extinct)
-          )
+      div(
+        style = "padding: 10px;",
+        p("These two heatmaps use the same axes and FracRefuge slider."),
+        tags$ul(
+          tags$li(definition_text$Pr_Sp1_Extinct),
+          tags$li(definition_text$Pr_Sp2_Extinct)
+        )
       ),
       layout_columns(
         col_widths = c(6, 6),
+        
         
         card(
           full_screen = TRUE,
@@ -227,49 +297,79 @@ ui <- page_sidebar(
     
     nav_panel(
       "Outcome category probability heatmap",
-      div(style = "padding: 10px;",
-          p("This tab uses run-level outcomes (Outcome_ft) and converts them into probabilities for each parameter combination."),
-          p(definition_text$Outcome_ft)
+      div(
+        style = "padding: 10px 10px 0 10px;",
+        p("This tab uses run-level outcomes and converts them into probabilities for each parameter combination."),
+        p(definition_text$Outcome_ft)
       ),
-      card(
-        card_header("Choose an outcome category to map"),
-        div(style = "padding: 10px;",
-            tooltip(
-              selectInput("outcome", "Outcome category: Outcome_ft", choices = outcome_choices, selected = outcome_choices[1]),
-              definition_text$Outcome_ft,
-              placement = "right"
-            )
-        )
+      # Dropdown + description side by side — no card wrapping, no scrolling needed
+      layout_columns(
+        col_widths = c(3, 9),
+        style = "padding: 0 10px 12px 10px; align-items: flex-start; overflow: visible;",
+        
+        div(
+          tooltip(
+            selectizeInput(
+              "outcome",
+              "Outcome category",
+              choices = outcome_select_choices,
+              selected = outcome_choices_internal[1],
+              options = list(dropdownParent = "body", maxOptions = 10000)
+            ),
+            definition_text$Outcome_ft,
+            placement = "right"
+          )
+        ),
+        
+        # Description always visible to the right of the dropdown
+        uiOutput("outcome_description_box")
       ),
+      
       card(
         full_screen = TRUE,
         card_header("Probability that the selected outcome occurs"),
-        plotOutput("heat_outcome", height = "720px")
+        plotOutput("heat_outcome", height = "620px")
       )
     ),
     
     nav_panel(
       "About",
-      div(style = "padding: 12px;",
-          h4("Source"),
-          p(
-            "This app visualizes simulation results from the model described in the ",
-            tags$a(
-              "Grether & Okamoto (2022) paper",
-              href = "https://sites.lifesci.ucla.edu/eeb-gretherlab/wp-content/uploads/sites/146/2022/09/Grether-Okamoto-2022.pdf",
-              target = "_blank"
-            ),
-            "."
+      div(
+        style = "padding: 12px;",
+        h4("Source"),
+        p(
+          "This app visualizes simulation results from the model described in the ",
+          tags$a(
+            "Grether & Okamoto (2022) paper",
+            href = "https://sites.lifesci.ucla.edu/eeb-gretherlab/wp-content/uploads/sites/146/2022/09/Grether-Okamoto-2022.pdf",
+            target = "_blank"
           ),
-          h4("Interpretation"),
-          p("All values shown in the heatmaps are probabilities between 0 and 1."),
-          p("The app is intended for exploration and communication; interpretation should follow the assumptions and definitions in the paper.")
+          "."
+        ),
+        h4("Outcome category definitions"),
+        tags$ul(
+          lapply(outcome_choices_internal, function(key) {
+            tags$li(HTML(outcome_descriptions[[key]]))
+          })
+        ),
+        tags$p(
+          tags$em(
+            tags$strong("Note \u2014 not plotted: "),
+            "Species 2 Converges \u2014 Species 2 converged in Z, Mu, or both, becoming more ",
+            "phenotypically similar to Species 1. Species 1 remained relatively stable in its ",
+            "values of Z and Mu from beginning to end. Occurred only twice across all simulations; ",
+            "probabilities not plotted."
+          )
+        ),
+        h4("Interpretation"),
+        p("All values shown in the heatmaps are probabilities between 0 and 1."),
+        p("The app is intended for exploration and communication; interpretation should follow the assumptions and definitions in the paper.")
       )
     )
   )
 )
 
-#server
+# server
 server <- function(input, output, session) {
   
   frac_val <- reactive(fracs[input$fr_idx])
@@ -278,7 +378,23 @@ server <- function(input, output, session) {
     paste0("Currently showing FracRefuge = ", frac_val(), " (", definition_text$FracRefuge, ")")
   })
   
-  #summary-based heatmaps
+  # Render the description box for the selected outcome category
+  output$outcome_description_box <- renderUI({
+    req(input$outcome)
+    desc_html <- outcome_descriptions[[input$outcome]]
+    if (!is.null(desc_html)) {
+      div(
+        style = paste0(
+          "margin-top: 0px; padding: 10px 14px; border-left: 3px solid #7AA2F7; ",
+          "background: rgba(122,162,247,0.08); border-radius: 4px; font-size: 0.80em; ",
+          "line-height: 1.6; min-height: 80px; overflow: visible;"
+        ),
+        HTML(desc_html)
+      )
+    }
+  })
+  
+  # summary-based heatmaps
   summary_slice <- reactive({
     summary_df %>%
       filter(
@@ -291,66 +407,80 @@ server <- function(input, output, session) {
       )
   })
   
-  #coexistance heatmap
+  # coexistence heatmap
   output$heat_coexist <- renderPlot({
     dat <- summary_slice() %>% mutate(val = Pr_Coexist)
     validate(need(nrow(dat) > 0, "No data matches the current settings."))
     
     ggplot(dat, aes(x = x, y = y, fill = val)) +
       geom_tile() +
+      scale_x_discrete(drop = FALSE) +
+      scale_y_discrete(drop = FALSE) +
       labs(
         x = "Difference in fighting ability (FightingDiff)",
         y = "Resource overlap (ResourceOverlap)",
         fill = "Probability (0 to 1)",
-        title = paste0("Coexistence probability | FracRefuge = ", frac_val(), " | InitialDiff = ", input$initialdiff)
+        title = paste0("Coexistence probability | FracRefuge = ", frac_val(),
+                       " | InitialDiff = ", input$initialdiff)
       ) +
       theme_midnight_plot()
   })
   
-  #extinction heatmap for sp1
+  # extinction heatmap for sp1
   output$heat_sp1 <- renderPlot({
     dat <- summary_slice() %>% mutate(val = Pr_Sp1_Extinct)
     validate(need(nrow(dat) > 0, "No data matches the current settings."))
     
     ggplot(dat, aes(x = x, y = y, fill = val)) +
       geom_tile() +
+      scale_x_discrete(drop = FALSE) +
+      scale_y_discrete(drop = FALSE) +
       labs(
         x = "Difference in fighting ability (FightingDiff)",
         y = "Resource overlap (ResourceOverlap)",
         fill = "Probability (0 to 1)",
-        title = paste0("Species 1 extinction probability | FracRefuge = ", frac_val(), " | InitialDiff = ", input$initialdiff)
+        title = paste0("Species 1 extinction probability | FracRefuge = ", frac_val(),
+                       " | InitialDiff = ", input$initialdiff)
       ) +
       theme_midnight_plot()
   })
-  #extinction heatmap sp2
+  
+  # extinction heatmap sp2
   output$heat_sp2 <- renderPlot({
     dat <- summary_slice() %>% mutate(val = Pr_Sp2_Extinct)
     validate(need(nrow(dat) > 0, "No data matches the current settings."))
     
     ggplot(dat, aes(x = x, y = y, fill = val)) +
       geom_tile() +
+      scale_x_discrete(drop = FALSE) +
+      scale_y_discrete(drop = FALSE) +
       labs(
         x = "Difference in fighting ability (FightingDiff)",
         y = "Resource overlap (ResourceOverlap)",
         fill = "Probability (0 to 1)",
-        title = paste0("Species 2 extinction probability | FracRefuge = ", frac_val(), " | InitialDiff = ", input$initialdiff)
+        title = paste0("Species 2 extinction probability | FracRefuge = ", frac_val(),
+                       " | InitialDiff = ", input$initialdiff)
       ) +
       theme_midnight_plot()
   })
   
-  #outcome heatmap FIXXX THISSS
-  #Blank tiles in the outcome heatmap happen because some outcome
-  # categories never occur in some parameter combinations
-  #(so you have missing rows, not zeros).
-  #Fix by “filling missing outcomes with probability 0”
+  # outcome heatmap (PI categories) with fixed axes
   output$heat_outcome <- renderPlot({
     req(input$outcome)
+    
+    # Get the display label for the plot title
+    display_label <- outcome_display_labels[input$outcome]
     
     dat <- outcome_probs %>%
       filter(
         InitialDiff == as.numeric(input$initialdiff),
         FracRefuge == frac_val(),
-        Outcome_ft == input$outcome
+        Outcome_cat == input$outcome
+      ) %>%
+      tidyr::complete(
+        FightingDiff = x_levels,
+        ResourceOverlap = y_levels,
+        fill = list(prob = 0)
       ) %>%
       mutate(
         x = factor(FightingDiff, levels = x_levels),
@@ -361,18 +491,16 @@ server <- function(input, output, session) {
     
     ggplot(dat, aes(x = x, y = y, fill = prob)) +
       geom_tile() +
+      scale_x_discrete(drop = FALSE) +
+      scale_y_discrete(drop = FALSE) +
       labs(
         x = "Difference in fighting ability (FightingDiff)",
         y = "Resource overlap (ResourceOverlap)",
         fill = "Probability (0 to 1)",
-        title = paste0("P(Outcome_ft = ", input$outcome, ") | FracRefuge = ", frac_val(), " | InitialDiff = ", input$initialdiff)
+        title = paste0("P(Outcome = ", display_label, ") | FracRefuge = ", frac_val(),
+                       " | InitialDiff = ", input$initialdiff)
       ) +
       theme_midnight_plot()
   })
 }
-
 shinyApp(ui, server)
-
-
-
-
