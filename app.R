@@ -161,6 +161,14 @@ outcome_probs <- runs_df %>%
   mutate(prob = n / sum(n)) %>%
   ungroup()
 
+# precompute n per (InitialDiff, FracRefuge) for summary-based heatmaps
+summary_n <- runs_df %>%
+  count(InitialDiff, FracRefuge, name = "n_runs")
+
+# precompute n per (InitialDiff, FracRefuge) for outcome heatmaps (after category filtering)
+outcome_n <- runs_df %>%
+  count(InitialDiff, FracRefuge, name = "n_runs")
+
 # UI text
 definition_text <- list(
   FracRefuge = paste(
@@ -220,13 +228,14 @@ ui <- page_sidebar(
       sliderInput(
         "fr_idx",
         "Refuge habitat proportion: FracRefuge",
-        min = 1, max = length(fracs), value = 1, step = 1,
-        animate = animationOptions(interval = 900, loop = TRUE)
+        min = min(fracs), max = max(fracs),
+        value = min(fracs),
+        step = NULL,
+        animate = animationOptions(interval = 400, loop = TRUE)
       ),
       definition_text$FracRefuge,
       placement = "right"
     ),
-    textOutput("frac_label"),
     
     hr(),
     
@@ -279,7 +288,6 @@ ui <- page_sidebar(
       ),
       layout_columns(
         col_widths = c(6, 6),
-        
         
         card(
           full_screen = TRUE,
@@ -363,7 +371,16 @@ ui <- page_sidebar(
         ),
         h4("Interpretation"),
         p("All values shown in the heatmaps are probabilities between 0 and 1."),
-        p("The app is intended for exploration and communication; interpretation should follow the assumptions and definitions in the paper.")
+        p("The app is intended for exploration and communication; interpretation should follow the assumptions and definitions in the paper."),
+        
+        hr(),
+        
+        p(
+          tags$em("Made by Aleena Munshi."),
+          " For questions or comments, contact ",
+          tags$a("aleenamunshi001@g.ucla.edu", href = "mailto:aleenamunshi001@g.ucla.edu"),
+          "."
+        )
       )
     )
   )
@@ -372,10 +389,9 @@ ui <- page_sidebar(
 # server
 server <- function(input, output, session) {
   
-  frac_val <- reactive(fracs[input$fr_idx])
-  
-  output$frac_label <- renderText({
-    paste0("Currently showing FracRefuge = ", frac_val(), " (", definition_text$FracRefuge, ")")
+  frac_val <- reactive({
+    # snap input value to the nearest actual FracRefuge value in the data
+    fracs[which.min(abs(fracs - input$fr_idx))]
   })
   
   # Render the description box for the selected outcome category
@@ -394,6 +410,28 @@ server <- function(input, output, session) {
     }
   })
   
+  # Helper: get n for summary-based heatmaps (runs that went into this slice)
+  get_summary_n <- reactive({
+    row <- summary_n %>%
+      filter(
+        InitialDiff == as.numeric(input$initialdiff),
+        FracRefuge  == frac_val()
+      )
+    if (nrow(row) == 0) return(NULL)
+    row$n_runs[1]
+  })
+  
+  # Helper: get n for outcome heatmap
+  get_outcome_n <- reactive({
+    row <- outcome_n %>%
+      filter(
+        InitialDiff == as.numeric(input$initialdiff),
+        FracRefuge  == frac_val()
+      )
+    if (nrow(row) == 0) return(NULL)
+    row$n_runs[1]
+  })
+  
   # summary-based heatmaps
   summary_slice <- reactive({
     summary_df %>%
@@ -407,21 +445,30 @@ server <- function(input, output, session) {
       )
   })
   
+  # CHANGE 2: helper to build n= subtitle string
+  n_subtitle <- function(n) {
+    if (is.null(n)) return("n = unknown")
+    paste0("n = ", formatC(n, format = "d", big.mark = ","), " simulation runs")
+  }
+  
   # coexistence heatmap
   output$heat_coexist <- renderPlot({
     dat <- summary_slice() %>% mutate(val = Pr_Coexist)
     validate(need(nrow(dat) > 0, "No data matches the current settings."))
+    n <- get_summary_n()
     
     ggplot(dat, aes(x = x, y = y, fill = val)) +
       geom_tile() +
       scale_x_discrete(drop = FALSE) +
       scale_y_discrete(drop = FALSE) +
+      scale_fill_continuous(limits = c(0, 1)) +
       labs(
-        x = "Difference in fighting ability (FightingDiff)",
-        y = "Resource overlap (ResourceOverlap)",
-        fill = "Probability (0 to 1)",
-        title = paste0("Coexistence probability | FracRefuge = ", frac_val(),
-                       " | InitialDiff = ", input$initialdiff)
+        x        = "Difference in fighting ability (FightingDiff)",
+        y        = "Resource overlap (ResourceOverlap)",
+        fill     = "Probability (0 to 1)",
+        title    = paste0("Coexistence probability | FracRefuge = ", frac_val(),
+                          " | InitialDiff = ", input$initialdiff),
+        subtitle = n_subtitle(n)
       ) +
       theme_midnight_plot()
   })
@@ -430,17 +477,20 @@ server <- function(input, output, session) {
   output$heat_sp1 <- renderPlot({
     dat <- summary_slice() %>% mutate(val = Pr_Sp1_Extinct)
     validate(need(nrow(dat) > 0, "No data matches the current settings."))
+    n <- get_summary_n()
     
     ggplot(dat, aes(x = x, y = y, fill = val)) +
       geom_tile() +
       scale_x_discrete(drop = FALSE) +
       scale_y_discrete(drop = FALSE) +
+      scale_fill_continuous(limits = c(0, 1)) +
       labs(
-        x = "Difference in fighting ability (FightingDiff)",
-        y = "Resource overlap (ResourceOverlap)",
-        fill = "Probability (0 to 1)",
-        title = paste0("Species 1 extinction probability | FracRefuge = ", frac_val(),
-                       " | InitialDiff = ", input$initialdiff)
+        x        = "Difference in fighting ability (FightingDiff)",
+        y        = "Resource overlap (ResourceOverlap)",
+        fill     = "Probability (0 to 1)",
+        title    = paste0("Species 1 extinction probability | FracRefuge = ", frac_val(),
+                          " | InitialDiff = ", input$initialdiff),
+        subtitle = n_subtitle(n)
       ) +
       theme_midnight_plot()
   })
@@ -449,17 +499,20 @@ server <- function(input, output, session) {
   output$heat_sp2 <- renderPlot({
     dat <- summary_slice() %>% mutate(val = Pr_Sp2_Extinct)
     validate(need(nrow(dat) > 0, "No data matches the current settings."))
+    n <- get_summary_n()
     
     ggplot(dat, aes(x = x, y = y, fill = val)) +
       geom_tile() +
       scale_x_discrete(drop = FALSE) +
       scale_y_discrete(drop = FALSE) +
+      scale_fill_continuous(limits = c(0, 1)) +
       labs(
-        x = "Difference in fighting ability (FightingDiff)",
-        y = "Resource overlap (ResourceOverlap)",
-        fill = "Probability (0 to 1)",
-        title = paste0("Species 2 extinction probability | FracRefuge = ", frac_val(),
-                       " | InitialDiff = ", input$initialdiff)
+        x        = "Difference in fighting ability (FightingDiff)",
+        y        = "Resource overlap (ResourceOverlap)",
+        fill     = "Probability (0 to 1)",
+        title    = paste0("Species 2 extinction probability | FracRefuge = ", frac_val(),
+                          " | InitialDiff = ", input$initialdiff),
+        subtitle = n_subtitle(n)
       ) +
       theme_midnight_plot()
   })
@@ -470,6 +523,7 @@ server <- function(input, output, session) {
     
     # Get the display label for the plot title
     display_label <- outcome_display_labels[input$outcome]
+    n <- get_outcome_n()
     
     dat <- outcome_probs %>%
       filter(
@@ -493,14 +547,18 @@ server <- function(input, output, session) {
       geom_tile() +
       scale_x_discrete(drop = FALSE) +
       scale_y_discrete(drop = FALSE) +
+      scale_fill_continuous(limits = c(0, 1)) +
       labs(
-        x = "Difference in fighting ability (FightingDiff)",
-        y = "Resource overlap (ResourceOverlap)",
-        fill = "Probability (0 to 1)",
-        title = paste0("P(Outcome = ", display_label, ") | FracRefuge = ", frac_val(),
-                       " | InitialDiff = ", input$initialdiff)
+        x        = "Difference in fighting ability (FightingDiff)",
+        y        = "Resource overlap (ResourceOverlap)",
+        fill     = "Probability (0 to 1)",
+        title    = paste0("P(Outcome = ", display_label, ") | FracRefuge = ", frac_val(),
+                          " | InitialDiff = ", input$initialdiff),
+        subtitle = n_subtitle(n)   # CHANGE 2: n= added here
       ) +
       theme_midnight_plot()
   })
 }
 shinyApp(ui, server)
+
+
